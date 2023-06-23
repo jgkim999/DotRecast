@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 using DotRecast.Core;
 using DotRecast.Detour.Dynamic.Colliders;
 using DotRecast.Detour.Dynamic.Io;
-using DotRecast.Detour.QueryResults;
+
 using NUnit.Framework;
 
 namespace DotRecast.Detour.Dynamic.Test;
@@ -43,7 +43,8 @@ public class DynamicNavMeshTest
         query.FindNearestPoly(START_POS, EXTENT, filter, out var startRef, out var startPt, out var _);
         query.FindNearestPoly(END_POS, EXTENT, filter, out var endRef, out var endPt, out var _);
 
-        List<long> path = query.FindPath(startRef, endRef, startPt, endPt, filter, DtNavMeshQuery.DT_FINDPATH_ANY_ANGLE, float.MaxValue).result;
+        var path = new List<long>();
+        query.FindPath(startRef, endRef, startPt, endPt, filter, ref path, DtFindPathOption.AnyAngle);
         // check path length without any obstacles
         Assert.That(path.Count, Is.EqualTo(16));
 
@@ -61,8 +62,8 @@ public class DynamicNavMeshTest
         // find path again
         query.FindNearestPoly(START_POS, EXTENT, filter, out startRef, out startPt, out var _);
         query.FindNearestPoly(END_POS, EXTENT, filter, out endRef, out endPt, out var _);
-        path = query.FindPath(startRef, endRef, startPt, endPt, filter, DtNavMeshQuery.DT_FINDPATH_ANY_ANGLE, float.MaxValue).result;
-        
+        query.FindPath(startRef, endRef, startPt, endPt, filter, ref path, DtFindPathOption.AnyAngle);
+
         // check path length with obstacles
         Assert.That(path.Count, Is.EqualTo(19));
         // remove obstacle
@@ -73,12 +74,12 @@ public class DynamicNavMeshTest
         _ = future.Result;
         // create new query
         query = new DtNavMeshQuery(mesh.NavMesh());
-        
+
         // find path one more time
         query.FindNearestPoly(START_POS, EXTENT, filter, out startRef, out startPt, out var _);
         query.FindNearestPoly(END_POS, EXTENT, filter, out endRef, out endPt, out var _);
-        path = query.FindPath(startRef, endRef, startPt, endPt, filter, DtNavMeshQuery.DT_FINDPATH_ANY_ANGLE, float.MaxValue).result;
-        
+        query.FindPath(startRef, endRef, startPt, endPt, filter, ref path, DtFindPathOption.AnyAngle);
+
         // path length should be back to the initial value
         Assert.That(path.Count, Is.EqualTo(16));
     }

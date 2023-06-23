@@ -22,7 +22,6 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using DotRecast.Core;
-using DotRecast.Detour.QueryResults;
 
 namespace DotRecast.Detour
 {
@@ -764,25 +763,22 @@ namespace DotRecast.Detour
      *            The polygon filter to apply to the query.
      * @return Found path
      */
-        public virtual Result<List<long>> FindPath(long startRef, long endRef, RcVec3f startPos, RcVec3f endPos, IDtQueryFilter filter)
+        public DtStatus FindPath(long startRef, long endRef, RcVec3f startPos, RcVec3f endPos, IDtQueryFilter filter, ref List<long> path, DtFindPathOption fpo)
         {
-            return FindPath(startRef, endRef, startPos, endPos, filter, DefaultQueryHeuristic.Default, 0, 0);
-        }
+            if (null == path)
+                return DtStatus.DT_FAILURE | DtStatus.DT_INVALID_PARAM;
 
-        public virtual Result<List<long>> FindPath(long startRef, long endRef, RcVec3f startPos, RcVec3f endPos, IDtQueryFilter filter,
-            int options, float raycastLimit)
-        {
-            return FindPath(startRef, endRef, startPos, endPos, filter, DefaultQueryHeuristic.Default, options, raycastLimit);
-        }
+            path.Clear();
 
-        public Result<List<long>> FindPath(long startRef, long endRef, RcVec3f startPos, RcVec3f endPos, IDtQueryFilter filter,
-            IQueryHeuristic heuristic, int options, float raycastLimit)
-        {
             // Validate input
             if (!m_nav.IsValidPolyRef(startRef) || !m_nav.IsValidPolyRef(endRef) || !RcVec3f.IsFinite(startPos) || !RcVec3f.IsFinite(endPos) || null == filter)
             {
-                return Results.InvalidParam<List<long>>();
+                return DtStatus.DT_FAILURE | DtStatus.DT_INVALID_PARAM;
             }
+
+            var heuristic = fpo.heuristic;
+            var raycastLimit = fpo.raycastLimit;
+            var options = fpo.options;
 
             float raycastLimitSqr = Sqr(raycastLimit);
 
@@ -798,9 +794,8 @@ namespace DotRecast.Detour
 
             if (startRef == endRef)
             {
-                List<long> singlePath = new List<long>(1);
-                singlePath.Add(startRef);
-                return Results.Success(singlePath);
+                path.Add(startRef);
+                return DtStatus.DT_SUCCSESS;
             }
 
             m_nodePool.Clear();
@@ -818,7 +813,6 @@ namespace DotRecast.Detour
             DtNode lastBestNode = startNode;
             float lastBestNodeCost = startNode.total;
 
-            DtStatus status = DtStatus.DT_SUCCSESS;
 
             while (!m_openList.IsEmpty())
             {
@@ -918,9 +912,9 @@ namespace DotRecast.Detour
                     List<long> shortcut = null;
                     if (tryLOS)
                     {
-                        status = Raycast(parentRef, parentNode.pos, neighbourPos, filter,
+                        var rayStatus = Raycast(parentRef, parentNode.pos, neighbourPos, filter,
                             DT_RAYCAST_USE_COSTS, grandpaRef, out var rayHit);
-                        if (status.Succeeded())
+                        if (rayStatus.Succeeded())
                         {
                             foundShortCut = rayHit.t >= 1.0f;
                             if (foundShortCut)
@@ -999,14 +993,13 @@ namespace DotRecast.Detour
                 }
             }
 
-            List<long> path = GetPathToNode(lastBestNode);
-
+            var status = GetPathToNode(lastBestNode, ref path);
             if (lastBestNode.id != endRef)
             {
-                status = DtStatus.DT_PARTIAL_RESULT;
+                status |= DtStatus.DT_PARTIAL_RESULT;
             }
 
-            return Results.Of(status, path);
+            return status;
         }
 
         /**
@@ -1339,14 +1332,18 @@ namespace DotRecast.Detour
         /// @param[out] path An ordered list of polygon references representing the path. (Start to end.)
         /// [(polyRef) * @p pathCount]
         /// @returns The status flags for the query.
-        public virtual Result<List<long>> FinalizeSlicedFindPath()
+        public virtual DtStatus FinalizeSlicedFindPath(ref List<long> path)
         {
-            List<long> path = new List<long>(64);
+            if (null == path)
+                return DtStatus.DT_FAILURE | DtStatus.DT_INVALID_PARAM;
+
+            path.Clear();
+
             if (m_query.status.Failed())
             {
                 // Reset query.
                 m_query = new DtQueryData();
-                return Results.Failure(path);
+                return DtStatus.DT_FAILURE;
             }
 
             if (m_query.startRef == m_query.endRef)
@@ -1359,17 +1356,18 @@ namespace DotRecast.Detour
                 // Reverse the path.
                 if (m_query.lastBestNode.id != m_query.endRef)
                 {
-                    m_query.status = DtStatus.DT_PARTIAL_RESULT;
+                    m_query.status |= DtStatus.DT_PARTIAL_RESULT;
                 }
 
-                path = GetPathToNode(m_query.lastBestNode);
+                GetPathToNode(m_query.lastBestNode, ref path);
             }
 
-            DtStatus status = m_query.status;
+            var details = m_query.status & DtStatus.DT_STATUS_DETAIL_MASK;
+
             // Reset query.
             m_query = new DtQueryData();
 
-            return Results.Of(status, path);
+            return DtStatus.DT_SUCCSESS | details;
         }
 
         /// Finalizes and returns the results of an incomplete sliced path query, returning the path to the furthest
@@ -1379,19 +1377,23 @@ namespace DotRecast.Detour
         /// @param[out] path An ordered list of polygon references representing the path. (Start to end.)
         /// [(polyRef) * @p pathCount]
         /// @returns The status flags for the query.
-        public virtual Result<List<long>> FinalizeSlicedFindPathPartial(List<long> existing)
+        public virtual DtStatus FinalizeSlicedFindPathPartial(List<long> existing, ref List<long> path)
         {
-            List<long> path = new List<long>(64);
+            if (null == path)
+                return DtStatus.DT_FAILURE | DtStatus.DT_INVALID_PARAM;
+
+            path.Clear();
+
             if (null == existing || existing.Count <= 0)
             {
-                return Results.Failure(path);
+                return DtStatus.DT_FAILURE | DtStatus.DT_INVALID_PARAM;
             }
 
             if (m_query.status.Failed())
             {
                 // Reset query.
                 m_query = new DtQueryData();
-                return Results.Failure(path);
+                return DtStatus.DT_FAILURE;
             }
 
             if (m_query.startRef == m_query.endRef)
@@ -1414,18 +1416,19 @@ namespace DotRecast.Detour
 
                 if (node == null)
                 {
-                    m_query.status = DtStatus.DT_PARTIAL_RESULT;
+                    m_query.status |= DtStatus.DT_PARTIAL_RESULT;
                     node = m_query.lastBestNode;
                 }
 
-                path = GetPathToNode(node);
+                GetPathToNode(node, ref path);
             }
 
-            DtStatus status = m_query.status;
+            var details = m_query.status & DtStatus.DT_STATUS_DETAIL_MASK;
+
             // Reset query.
             m_query = new DtQueryData();
 
-            return Results.Of(status, path);
+            return DtStatus.DT_SUCCSESS | details;
         }
 
         protected DtStatus AppendVertex(RcVec3f pos, int flags, long refs, ref List<StraightPathItem> straightPath,
@@ -3367,34 +3370,33 @@ namespace DotRecast.Detour
      * @remarks The result of this function depends on the state of the query object. For that reason it should only be
      *          used immediately after one of the two Dijkstra searches, findPolysAroundCircle or findPolysAroundShape.
      */
-        public Result<List<long>> GetPathFromDijkstraSearch(long endRef)
+        public DtStatus GetPathFromDijkstraSearch(long endRef, ref List<long> path)
         {
-            if (!m_nav.IsValidPolyRef(endRef))
+            if (!m_nav.IsValidPolyRef(endRef) || null == path)
             {
-                return Results.InvalidParam<List<long>>("Invalid end ref");
+                return DtStatus.DT_FAILURE | DtStatus.DT_INVALID_PARAM;
             }
+            
+            path.Clear();
 
             List<DtNode> nodes = m_nodePool.FindNodes(endRef);
             if (nodes.Count != 1)
             {
-                return Results.InvalidParam<List<long>>("Invalid end ref");
+                return DtStatus.DT_FAILURE | DtStatus.DT_INVALID_PARAM;
             }
 
             DtNode endNode = nodes[0];
             if ((endNode.flags & DT_NODE_CLOSED) == 0)
             {
-                return Results.InvalidParam<List<long>>("Invalid end ref");
+                return DtStatus.DT_FAILURE | DtStatus.DT_INVALID_PARAM;
             }
 
-            return Results.Success(GetPathToNode(endNode));
+            return GetPathToNode(endNode, ref path);
         }
 
-        /**
-     * Gets the path leading to the specified end node.
-     */
-        protected List<long> GetPathToNode(DtNode endNode)
+        // Gets the path leading to the specified end node.
+        protected DtStatus GetPathToNode(DtNode endNode, ref List<long> path)
         {
-            List<long> path = new List<long>();
             // Reverse the path.
             DtNode curNode = endNode;
             do
@@ -3417,7 +3419,7 @@ namespace DotRecast.Detour
                 curNode = nextNode;
             } while (curNode != null);
 
-            return path;
+            return DtStatus.DT_SUCCSESS;
         }
 
         /**

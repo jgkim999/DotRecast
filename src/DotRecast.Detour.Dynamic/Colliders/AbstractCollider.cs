@@ -16,6 +16,7 @@ freely, subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 */
 
+using DotRecast.Core;
 using DotRecast.Recast;
 
 namespace DotRecast.Detour.Dynamic.Colliders
@@ -38,6 +39,6 @@ namespace DotRecast.Detour.Dynamic.Colliders
             return _bounds;
         }
 
-        public abstract void Rasterize(RcHeightfield hf, Telemetry telemetry);
+        public abstract void Rasterize(RcHeightfield hf, RcTelemetry telemetry);
     }
 }

@@ -19,39 +19,43 @@ freely, subject to the following restrictions:
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using System.Threading;
-using DotRecast.Core;
 
-namespace DotRecast.Recast
+namespace DotRecast.Core
 {
-    public class Telemetry
+    public class RcTelemetry
     {
-        private readonly ThreadLocal<Dictionary<string, RcAtomicLong>> timerStart = new ThreadLocal<Dictionary<string, RcAtomicLong>>(() => new Dictionary<string, RcAtomicLong>());
-        private readonly ConcurrentDictionary<string, RcAtomicLong> timerAccum = new ConcurrentDictionary<string, RcAtomicLong>();
+        private readonly ThreadLocal<Dictionary<string, RcAtomicLong>> _timerStart;
+        private readonly ConcurrentDictionary<string, RcAtomicLong> _timerAccum;
+
+        public RcTelemetry()
+        {
+            _timerStart = new ThreadLocal<Dictionary<string, RcAtomicLong>>(() => new Dictionary<string, RcAtomicLong>());
+            _timerAccum = new ConcurrentDictionary<string, RcAtomicLong>();
+        }
 
         public void StartTimer(string name)
         {
-            timerStart.Value[name] = new RcAtomicLong(RcFrequency.Ticks);
+            _timerStart.Value[name] = new RcAtomicLong(RcFrequency.Ticks);
         }
 
         public void StopTimer(string name)
         {
-            timerAccum
+            _timerAccum
                 .GetOrAdd(name, _ => new RcAtomicLong(0))
-                .AddAndGet(RcFrequency.Ticks - timerStart.Value?[name].Read() ?? 0);
+                .AddAndGet(RcFrequency.Ticks - _timerStart.Value?[name].Read() ?? 0);
         }
 
-        public void Warn(string @string)
+        public void Warn(string message)
         {
-            Console.WriteLine(@string);
+            Console.WriteLine(message);
         }
 
-        public List<Tuple<string, long>> ToList()
+        public List<RcTelemetryTick> ToList()
         {
-            return timerAccum
-                .Select(x => Tuple.Create(x.Key, x.Value.Read() / TimeSpan.TicksPerMillisecond))
+            return _timerAccum
+                .Select(x => new RcTelemetryTick(x.Key, x.Value.Read()))
                 .ToList();
         }
     }

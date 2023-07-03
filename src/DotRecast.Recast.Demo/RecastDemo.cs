@@ -37,16 +37,19 @@ using DotRecast.Detour.Extras.Unity.Astar;
 using DotRecast.Detour.Io;
 using DotRecast.Recast.DemoTool.Builder;
 using DotRecast.Recast.Demo.Draw;
+using DotRecast.Recast.Demo.Messages;
 using DotRecast.Recast.DemoTool.Geom;
 using DotRecast.Recast.Demo.Tools;
 using DotRecast.Recast.Demo.UI;
 using DotRecast.Recast.DemoTool;
+using Silk.NET.GLFW;
 using static DotRecast.Core.RcMath;
+using MouseButton = Silk.NET.Input.MouseButton;
 using Window = Silk.NET.Windowing.Window;
 
 namespace DotRecast.Recast.Demo;
 
-public class RecastDemo
+public class RecastDemo : IRecastDemoChannel
 {
     private static readonly ILogger Logger = Log.ForContext<RecastDemo>();
 
@@ -63,13 +66,13 @@ public class RecastDemo
 
     //private readonly RecastDebugDraw dd;
     private NavMeshRenderer renderer;
-    private bool building = false;
     private float timeAcc = 0;
     private float camr = 1000;
 
     private readonly SoloNavMeshBuilder soloNavMeshBuilder = new SoloNavMeshBuilder();
     private readonly TileNavMeshBuilder tileNavMeshBuilder = new TileNavMeshBuilder();
 
+    private string _lastGeomFileName;
     private Sample sample;
 
     private bool processHitTest = false;
@@ -115,9 +118,11 @@ public class RecastDemo
 
     private long prevFrameTime;
     private RecastDebugDraw dd;
+    private readonly Queue<IRecastDemoMessage> _messages;
 
     public RecastDemo()
     {
+        _messages = new();
     }
 
     public void Run()
@@ -170,9 +175,7 @@ public class RecastDemo
         if (pan)
         {
             float[] modelviewMatrix = dd.ViewMatrix(cameraPos, cameraEulers);
-            cameraPos.x = origCameraPos.x;
-            cameraPos.y = origCameraPos.y;
-            cameraPos.z = origCameraPos.z;
+            cameraPos = origCameraPos;
 
             cameraPos.x -= 0.1f * dx * modelviewMatrix[0];
             cameraPos.y -= 0.1f * dx * modelviewMatrix[4];
@@ -240,7 +243,7 @@ public class RecastDemo
                 if (!_mouseOverMenu)
                 {
                     processHitTest = true;
-                    processHitTestShift = _modState != 0 ? true : false;
+                    processHitTestShift = 0 != (_modState & KeyModState.Shift);
                 }
             }
             else if (button == MouseButton.Middle)
@@ -295,33 +298,41 @@ public class RecastDemo
         return window;
     }
 
-    private DemoInputGeomProvider LoadInputMesh(byte[] stream)
+    private DemoInputGeomProvider LoadInputMesh(string filename)
     {
-        DemoInputGeomProvider geom = DemoObjImporter.Load(stream);
+        var bytes = Loader.ToBytes(filename);
+        DemoInputGeomProvider geom = DemoObjImporter.Load(bytes);
+
+        _lastGeomFileName = filename;
         return geom;
     }
 
     private void LoadNavMesh(FileStream file, string filename)
     {
-        DtNavMesh mesh = null;
-        if (filename.EndsWith(".zip") || filename.EndsWith(".bytes"))
+        try
         {
-            UnityAStarPathfindingImporter importer = new UnityAStarPathfindingImporter();
-            mesh = importer.Load(file)[0];
-        }
-        else if (filename.EndsWith(".bin") || filename.EndsWith(".navmesh"))
-        {
-            DtMeshSetReader reader = new DtMeshSetReader();
-            using (var fis = new BinaryReader(file))
+            DtNavMesh mesh = null;
+            if (filename.EndsWith(".zip"))
             {
-                mesh = reader.Read(fis, 6);
+                UnityAStarPathfindingImporter importer = new UnityAStarPathfindingImporter();
+                mesh = importer.Load(file)[0];
+            }
+            else
+            {
+                using var br = new BinaryReader(file);
+                DtMeshSetReader reader = new DtMeshSetReader();
+                mesh = reader.Read(br, 6);
+            }
+
+            if (null != mesh)
+            {
+                sample = new Sample(sample.GetInputGeom(), ImmutableArray<RecastBuilderResult>.Empty, mesh);
+                toolset.SetEnabled(true);
             }
         }
-
-        if (mesh != null)
+        catch (Exception e)
         {
-            //sample = new Sample(null, ImmutableArray<RecastBuilderResult>.Empty, mesh, settingsUI, dd);
-            toolset.SetEnabled(true);
+            Logger.Error(e, "");
         }
     }
 
@@ -365,10 +376,10 @@ public class RecastDemo
         ImGuiFontConfig imGuiFontConfig = new(Path.Combine("resources\\fonts", "DroidSans.ttf"), 24, null);
         _imgui = new ImGuiController(_gl, window, _input, imGuiFontConfig);
 
-        DemoInputGeomProvider geom = LoadInputMesh(Loader.ToBytes("nav_test.obj"));
+        DemoInputGeomProvider geom = LoadInputMesh("nav_test.obj");
         sample = new Sample(geom, ImmutableArray<RecastBuilderResult>.Empty, null);
 
-        settingsView = new RcSettingsView();
+        settingsView = new RcSettingsView(this);
         settingsView.SetSample(sample);
 
         toolset = new RcToolsetView(
@@ -389,7 +400,7 @@ public class RecastDemo
         var renderGl = _gl.GetStringS(GLEnum.Renderer);
         var glslString = _gl.GetStringS(GLEnum.ShadingLanguageVersion);
 
-        
+
         var workingDirectory = Directory.GetCurrentDirectory();
         Logger.Information($"working directory - {workingDirectory}");
         Logger.Information($"ImGui.Net version - {ImGui.GetVersion()}");
@@ -402,7 +413,7 @@ public class RecastDemo
     private void UpdateKeyboard(float dt)
     {
         _modState = 0;
-        
+
         // keyboard input
         foreach (var keyboard in _input.Keyboards)
         {
@@ -415,7 +426,9 @@ public class RecastDemo
             var tempMoveAccel = keyboard.IsKeyPressed(Key.ShiftLeft) || keyboard.IsKeyPressed(Key.ShiftRight) ? 1.0f : -1f;
             var tempControl = keyboard.IsKeyPressed(Key.ControlLeft) || keyboard.IsKeyPressed(Key.ControlRight);
 
-            _modState |= tempControl || 0 < tempMoveAccel ? 1 : 0;
+            _modState |= tempControl ? (int)KeyModState.Control : (int)KeyModState.None;
+            _modState |= 0 < tempMoveAccel ? (int)KeyModState.Shift : (int)KeyModState.None;
+
             //Logger.Information($"{_modState}");
             _moveFront = Clamp(_moveFront + tempMoveFront * dt * 4.0f, 0, 2.0f);
             _moveLeft = Clamp(_moveLeft + tempMoveLeft * dt * 4.0f, 0, 2.0f);
@@ -487,140 +500,6 @@ public class RecastDemo
             simIter++;
         }
 
-        if (settingsView.IsMeshInputTrigerred())
-        {
-            var bytes = Loader.ToBytes(settingsView.GetMeshInputFilePath());
-            var geom = LoadInputMesh(bytes);
-
-            sample.Update(geom, ImmutableArray<RecastBuilderResult>.Empty, null);
-        }
-        else if (settingsView.IsNavMeshInputTrigerred())
-        {
-            // try (MemoryStack stack = StackPush()) {
-            //     PointerBuffer aFilterPatterns = stack.MallocPointer(4);
-            //     aFilterPatterns.Put(stack.UTF8("*.bin"));
-            //     aFilterPatterns.Put(stack.UTF8("*.zip"));
-            //     aFilterPatterns.Put(stack.UTF8("*.bytes"));
-            //     aFilterPatterns.Put(stack.UTF8("*.navmesh"));
-            //     aFilterPatterns.Flip();
-            //     string filename = TinyFileDialogs.Tinyfd_openFileDialog("Open Nav Mesh File", "", aFilterPatterns,
-            //         "Nav Mesh File", false);
-            //     if (filename != null) {
-            //         File file = new File(filename);
-            //         if (file.Exists()) {
-            //             try {
-            //                 LoadNavMesh(file, filename);
-            //                 geom = null;
-            //             } catch (Exception e) {
-            //                 Console.WriteLine(e);
-            //             }
-            //         }
-            //     }
-            // }
-        }
-
-        if (settingsView.IsBuildTriggered() && sample.GetInputGeom() != null)
-        {
-            if (!building)
-            {
-                var settings = sample.GetSettings();
-                var partitioning = settings.partitioning;
-                var cellSize = settings.cellSize;
-                var cellHeight = settings.cellHeight;
-                var agentHeight = settings.agentHeight;
-                var agentRadius = settings.agentRadius;
-                var agentMaxClimb = settings.agentMaxClimb;
-                var agentMaxSlope = settings.agentMaxSlope;
-                var regionMinSize = settings.minRegionSize;
-                var regionMergeSize = settings.mergedRegionSize;
-                var edgeMaxLen = settings.edgeMaxLen;
-                var edgeMaxError = settings.edgeMaxError;
-                var vertsPerPoly = settings.vertsPerPoly;
-                var detailSampleDist = settings.detailSampleDist;
-                var detailSampleMaxError = settings.detailSampleMaxError;
-                var filterLowHangingObstacles = settings.filterLowHangingObstacles;
-                var filterLedgeSpans = settings.filterLedgeSpans;
-                var filterWalkableLowHeightSpans = settings.filterWalkableLowHeightSpans;
-                var tileSize = settings.tileSize;
-
-                long t = RcFrequency.Ticks;
-
-                Logger.Information($"build");
-
-                Tuple<IList<RecastBuilderResult>, DtNavMesh> buildResult;
-                if (settings.tiled)
-                {
-                    buildResult = tileNavMeshBuilder.Build(
-                        sample.GetInputGeom(),
-                        partitioning,
-                        cellSize,
-                        cellHeight,
-                        agentHeight,
-                        agentRadius,
-                        agentMaxClimb,
-                        agentMaxSlope,
-                        regionMinSize,
-                        regionMergeSize,
-                        edgeMaxLen,
-                        edgeMaxError,
-                        vertsPerPoly,
-                        detailSampleDist,
-                        detailSampleMaxError,
-                        filterLowHangingObstacles,
-                        filterLedgeSpans,
-                        filterWalkableLowHeightSpans,
-                        tileSize
-                    );
-                }
-                else
-                {
-                    buildResult = soloNavMeshBuilder.Build(
-                        sample.GetInputGeom(),
-                        partitioning,
-                        cellSize,
-                        cellHeight,
-                        agentHeight,
-                        agentRadius,
-                        agentMaxClimb,
-                        agentMaxSlope,
-                        regionMinSize,
-                        regionMergeSize,
-                        edgeMaxLen,
-                        edgeMaxError,
-                        vertsPerPoly,
-                        detailSampleDist,
-                        detailSampleMaxError,
-                        filterLowHangingObstacles,
-                        filterLedgeSpans,
-                        filterWalkableLowHeightSpans
-                    );
-                }
-
-                sample.Update(sample.GetInputGeom(), buildResult.Item1, buildResult.Item2);
-                sample.SetChanged(false);
-                settingsView.SetBuildTime((RcFrequency.Ticks - t) / TimeSpan.TicksPerMillisecond);
-                //settingsUI.SetBuildTelemetry(buildResult.Item1.Select(x => x.GetTelemetry()).ToList());
-                toolset.SetSample(sample);
-
-                Logger.Information($"build times");
-                Logger.Information($"-----------------------------------------");
-                var telemetries = buildResult.Item1
-                    .Select(x => x.GetTelemetry())
-                    .SelectMany(x => x.ToList())
-                    .GroupBy(x => x.Item1)
-                    .ToImmutableSortedDictionary(x => x.Key, x => x.Sum(y => y.Item2));
-
-                foreach (var (key, millis) in telemetries)
-                {
-                    Logger.Information($"{key}: {millis} ms");
-                }
-            }
-        }
-        else
-        {
-            building = false;
-        }
-
         if (!_mouseOverMenu)
         {
             GLU.GlhUnProjectf(mousePos[0], viewport[3] - 1 - mousePos[1], 0.0f, modelviewMatrix, projectionMatrix, viewport, ref rayStart);
@@ -658,7 +537,7 @@ public class RecastDemo
                 if (hit.HasValue)
                 {
                     float hitTime = hit.Value;
-                    if (0 != _modState)
+                    if (0 != (_modState & KeyModState.Control))
                     {
                         // Marker
                         markerPositionSet = true;
@@ -681,7 +560,7 @@ public class RecastDemo
                 }
                 else
                 {
-                    if (0 != _modState)
+                    if (0 != (_modState & KeyModState.Control))
                     {
                         // Marker
                         markerPositionSet = false;
@@ -745,13 +624,18 @@ public class RecastDemo
                 cameraPos.x = (bmax.x + bmin.x) / 2 + camr;
                 cameraPos.y = (bmax.y + bmin.y) / 2 + camr;
                 cameraPos.z = (bmax.z + bmin.z) / 2 + camr;
-                camr *= 3;
+                camr *= 5;
                 cameraEulers[0] = 45;
                 cameraEulers[1] = -45;
             }
 
             sample.SetChanged(false);
             toolset.SetSample(sample);
+        }
+
+        if (_messages.TryDequeue(out var msg))
+        {
+            OnMessage(msg);
         }
 
 
@@ -785,9 +669,189 @@ public class RecastDemo
 
         _canvas.Draw(dt);
         _mouseOverMenu = _canvas.IsMouseOver();
-        
+
         _imgui.Render();
 
         window.SwapBuffers();
+    }
+
+    public void SendMessage(IRecastDemoMessage message)
+    {
+        _messages.Enqueue(message);
+    }
+
+    private void OnMessage(IRecastDemoMessage message)
+    {
+        if (message is GeomLoadBeganEvent args)
+        {
+            OnGeomLoadBegan(args);
+        }
+        else if (message is NavMeshBuildBeganEvent args2)
+        {
+            OnNavMeshBuildBegan(args2);
+        }
+        else if (message is NavMeshSaveBeganEvent args3)
+        {
+            OnNavMeshSaveBegan(args3);
+        }
+        else if (message is NavMeshLoadBeganEvent args4)
+        {
+            OnNavMeshLoadBegan(args4);
+        }
+    }
+
+    private void OnGeomLoadBegan(GeomLoadBeganEvent args)
+    {
+        var geom = LoadInputMesh(args.FilePath);
+
+        sample.Update(geom, ImmutableArray<RecastBuilderResult>.Empty, null);
+    }
+
+    private void OnNavMeshBuildBegan(NavMeshBuildBeganEvent args)
+    {
+        if (null == sample.GetInputGeom())
+        {
+            Logger.Information($"not found source geom");
+            return;
+        }
+
+        var settings = sample.GetSettings();
+        var partitioning = settings.partitioning;
+        var cellSize = settings.cellSize;
+        var cellHeight = settings.cellHeight;
+        var agentHeight = settings.agentHeight;
+        var agentRadius = settings.agentRadius;
+        var agentMaxClimb = settings.agentMaxClimb;
+        var agentMaxSlope = settings.agentMaxSlope;
+        var regionMinSize = settings.minRegionSize;
+        var regionMergeSize = settings.mergedRegionSize;
+        var edgeMaxLen = settings.edgeMaxLen;
+        var edgeMaxError = settings.edgeMaxError;
+        var vertsPerPoly = settings.vertsPerPoly;
+        var detailSampleDist = settings.detailSampleDist;
+        var detailSampleMaxError = settings.detailSampleMaxError;
+        var filterLowHangingObstacles = settings.filterLowHangingObstacles;
+        var filterLedgeSpans = settings.filterLedgeSpans;
+        var filterWalkableLowHeightSpans = settings.filterWalkableLowHeightSpans;
+        var tileSize = settings.tileSize;
+
+        long t = RcFrequency.Ticks;
+
+        Logger.Information($"build");
+
+        NavMeshBuildResult buildResult;
+        if (settings.tiled)
+        {
+            buildResult = tileNavMeshBuilder.Build(
+                sample.GetInputGeom(),
+                partitioning,
+                cellSize,
+                cellHeight,
+                agentHeight,
+                agentRadius,
+                agentMaxClimb,
+                agentMaxSlope,
+                regionMinSize,
+                regionMergeSize,
+                edgeMaxLen,
+                edgeMaxError,
+                vertsPerPoly,
+                detailSampleDist,
+                detailSampleMaxError,
+                filterLowHangingObstacles,
+                filterLedgeSpans,
+                filterWalkableLowHeightSpans,
+                tileSize
+            );
+        }
+        else
+        {
+            buildResult = soloNavMeshBuilder.Build(
+                sample.GetInputGeom(),
+                partitioning,
+                cellSize,
+                cellHeight,
+                agentHeight,
+                agentRadius,
+                agentMaxClimb,
+                agentMaxSlope,
+                regionMinSize,
+                regionMergeSize,
+                edgeMaxLen,
+                edgeMaxError,
+                vertsPerPoly,
+                detailSampleDist,
+                detailSampleMaxError,
+                filterLowHangingObstacles,
+                filterLedgeSpans,
+                filterWalkableLowHeightSpans
+            );
+        }
+
+        sample.Update(sample.GetInputGeom(), buildResult.RecastBuilderResults, buildResult.NavMesh);
+        sample.SetChanged(false);
+        settingsView.SetBuildTime((RcFrequency.Ticks - t) / TimeSpan.TicksPerMillisecond);
+        //settingsUI.SetBuildTelemetry(buildResult.Item1.Select(x => x.GetTelemetry()).ToList());
+        toolset.SetSample(sample);
+
+        Logger.Information($"build times");
+        Logger.Information($"-----------------------------------------");
+        var telemetries = buildResult.RecastBuilderResults
+            .Select(x => x.GetTelemetry())
+            .SelectMany(x => x.ToList())
+            .GroupBy(x => x.Key)
+            .ToImmutableSortedDictionary(x => x.Key, x => x.Sum(y => y.Millis));
+
+        foreach (var (key, millis) in telemetries)
+        {
+            Logger.Information($"{key}: {millis} ms");
+        }
+    }
+
+    private void OnNavMeshSaveBegan(NavMeshSaveBeganEvent args)
+    {
+        var navMesh = sample.GetNavMesh();
+        if (null == navMesh)
+        {
+            Logger.Error("navmesh is null");
+            return;
+        }
+
+        DateTime now = DateTime.Now;
+        string ymdhms = $"{now:yyyyMMdd_HHmmss}";
+        var filename = Path.GetFileNameWithoutExtension(_lastGeomFileName);
+        var navmeshFilePath = $"{filename}_{ymdhms}.navmesh";
+        
+        using var fs = new FileStream(navmeshFilePath, FileMode.Create, FileAccess.Write);
+        using var bw = new BinaryWriter(fs);
+
+        var writer = new DtMeshSetWriter();
+        writer.Write(bw, navMesh, RcByteOrder.LITTLE_ENDIAN, true);
+        Logger.Information($"saved navmesh - {navmeshFilePath}");
+    }
+
+    private void OnNavMeshLoadBegan(NavMeshLoadBeganEvent args)
+    {
+        if (string.IsNullOrEmpty(args.FilePath))
+        {
+            Logger.Error("file path is empty");
+            return;
+        }
+
+        if (!File.Exists(args.FilePath))
+        {
+            Logger.Error($"not found navmesh file - {args.FilePath}");
+            return;
+        }
+
+        try
+        {
+            using FileStream fs = new FileStream(args.FilePath, FileMode.Open, FileAccess.Read);
+            LoadNavMesh(fs, args.FilePath);
+        }
+        catch (Exception e)
+        {
+            Logger.Error(e, "");
+        }
     }
 }

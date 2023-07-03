@@ -23,6 +23,7 @@ using System.Linq;
 using System.Numerics;
 using DotRecast.Core;
 using DotRecast.Recast.Demo.Draw;
+using DotRecast.Recast.Demo.Messages;
 using DotRecast.Recast.DemoTool;
 using ImGuiNET;
 using Serilog;
@@ -31,9 +32,9 @@ namespace DotRecast.Recast.Demo.UI;
 
 public class RcSettingsView : IRcView
 {
-    private static readonly ILogger Logger = Log.ForContext<RecastDemo>();
+    private static readonly ILogger Logger = Log.ForContext<RcSettingsView>();
 
-    private bool buildTriggered;
+    private readonly IRecastDemoChannel _channel;
     private long buildTime;
 
     private readonly int[] voxels = new int[2];
@@ -43,18 +44,15 @@ public class RcSettingsView : IRcView
 
     private int drawMode = DrawMode.DRAWMODE_NAVMESH.Idx;
 
-    private string meshInputFilePath;
-    private bool meshInputTrigerred;
-    private bool navMeshInputTrigerred;
-
     private bool _isHovered;
     public bool IsHovered() => _isHovered;
 
     private Sample _sample;
     private RcCanvas _canvas;
 
-    public RcSettingsView()
+    public RcSettingsView(IRecastDemoChannel channel)
     {
+        _channel = channel;
     }
 
     public void SetSample(Sample sample)
@@ -76,7 +74,7 @@ public class RcSettingsView : IRcView
         var settings = _sample.GetSettings();
 
         ImGui.Begin("Properties");
-        
+
         // size reset
         var size = ImGui.GetItemRectSize();
         if (32 >= size.X && 32 >= size.Y)
@@ -104,16 +102,14 @@ public class RcSettingsView : IRcView
             var picker = ImFilePicker.GetFilePicker(strLoadSourceGeom, Path.Combine(Environment.CurrentDirectory), ".obj");
             if (picker.Draw())
             {
-                meshInputTrigerred = true;
-                meshInputFilePath = picker.SelectedFile;
+                _channel.SendMessage(new GeomLoadBeganEvent()
+                {
+                    FilePath = picker.SelectedFile,
+                });
                 ImFilePicker.RemoveFilePicker(strLoadSourceGeom);
             }
 
             ImGui.EndPopup();
-        }
-        else
-        {
-            meshInputTrigerred = false;
         }
 
         ImGui.Text($"Verts: {voxels[0]} Tris: {voxels[1]}");
@@ -192,25 +188,40 @@ public class RcSettingsView : IRcView
         ImGui.Text($"Build Time: {buildTime} ms");
 
         ImGui.Separator();
-        buildTriggered = ImGui.Button("Build Nav Mesh");
-        const string strLoadNavMesh = "Load Nav Mesh...";
-        if (ImGui.Button(strLoadNavMesh))
+        if (ImGui.Button("Build NavMesh"))
         {
-            ImGui.OpenPopup(strLoadNavMesh);
+            _channel.SendMessage(new NavMeshBuildBeganEvent());
         }
 
-        bool isLoadNavMesh = true;
-        if (ImGui.BeginPopupModal(strLoadNavMesh, ref isLoadNavMesh, ImGuiWindowFlags.NoTitleBar))
         {
-            var picker = ImFilePicker.GetFilePicker(strLoadNavMesh, Path.Combine(Environment.CurrentDirectory));
-            if (picker.Draw())
+            const string strLoadNavMesh = "Load NavMesh";
+            if (ImGui.Button(strLoadNavMesh))
             {
-                Console.WriteLine(picker.SelectedFile);
-                ImFilePicker.RemoveFilePicker(strLoadNavMesh);
+                ImGui.OpenPopup(strLoadNavMesh);
             }
 
-            ImGui.EndPopup();
+            bool isLoadNavMesh = true;
+            if (ImGui.BeginPopupModal(strLoadNavMesh, ref isLoadNavMesh, ImGuiWindowFlags.NoTitleBar))
+            {
+                var picker = ImFilePicker.GetFilePicker(strLoadNavMesh, Path.Combine(Environment.CurrentDirectory));
+                if (picker.Draw())
+                {
+                    _channel.SendMessage(new NavMeshLoadBeganEvent()
+                    {
+                        FilePath = picker.SelectedFile,
+                    });
+                    ImFilePicker.RemoveFilePicker(strLoadNavMesh);
+                }
+
+                ImGui.EndPopup();
+            }
         }
+
+        if (ImGui.Button("Save NavMesh"))
+        {
+            _channel.SendMessage(new NavMeshSaveBeganEvent());
+        }
+
 
         ImGui.NewLine();
 
@@ -222,13 +233,6 @@ public class RcSettingsView : IRcView
 
         ImGui.End();
     }
-
-
-    public bool IsBuildTriggered()
-    {
-        return buildTriggered;
-    }
-
 
     public void SetBuildTime(long buildTime)
     {
@@ -260,20 +264,5 @@ public class RcSettingsView : IRcView
     public void SetMaxPolys(int maxPolys)
     {
         this.maxPolys = maxPolys;
-    }
-
-    public bool IsMeshInputTrigerred()
-    {
-        return meshInputTrigerred;
-    }
-
-    public string GetMeshInputFilePath()
-    {
-        return meshInputFilePath;
-    }
-
-    public bool IsNavMeshInputTrigerred()
-    {
-        return navMeshInputTrigerred;
     }
 }

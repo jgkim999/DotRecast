@@ -19,6 +19,7 @@ freely, subject to the following restrictions:
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using DotRecast.Core;
 using DotRecast.Recast;
 
 namespace DotRecast.Detour.Dynamic.Colliders
@@ -66,7 +67,7 @@ namespace DotRecast.Detour.Dynamic.Colliders
             return bounds;
         }
 
-        public void Rasterize(RcHeightfield hf, Telemetry telemetry)
+        public void Rasterize(RcHeightfield hf, RcTelemetry telemetry)
         {
             foreach (var c in colliders)
                 c.Rasterize(hf, telemetry);

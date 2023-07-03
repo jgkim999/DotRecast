@@ -16,6 +16,7 @@ freely, subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 */
 
+using DotRecast.Core;
 using NUnit.Framework;
 
 namespace DotRecast.Recast.Test;
@@ -35,7 +36,7 @@ public class RecastTest
         int[] unwalkable_tri = { 0, 2, 1 };
         int nt = 1;
 
-        Telemetry ctx = new Telemetry();
+        RcTelemetry ctx = new RcTelemetry();
         {
             int[] areas = { 42 };
             Recast.ClearUnwalkableTriangles(ctx, walkableSlopeAngle, verts, nv, unwalkable_tri, nt, areas);

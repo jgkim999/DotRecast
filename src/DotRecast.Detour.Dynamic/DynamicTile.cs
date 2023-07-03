@@ -21,6 +21,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using DotRecast.Core;
 using DotRecast.Detour.Dynamic.Colliders;
 using DotRecast.Detour.Dynamic.Io;
 using DotRecast.Recast;
@@ -42,7 +43,7 @@ namespace DotRecast.Detour.Dynamic
             this.voxelTile = voxelTile;
         }
 
-        public bool Build(RecastBuilder builder, DynamicNavMeshConfig config, Telemetry telemetry)
+        public bool Build(RecastBuilder builder, DynamicNavMeshConfig config, RcTelemetry telemetry)
         {
             if (dirty)
             {
@@ -57,7 +58,7 @@ namespace DotRecast.Detour.Dynamic
             return false;
         }
 
-        private RcHeightfield BuildHeightfield(DynamicNavMeshConfig config, Telemetry telemetry)
+        private RcHeightfield BuildHeightfield(DynamicNavMeshConfig config, RcTelemetry telemetry)
         {
             ICollection<long> rasterizedColliders = checkpoint != null ? checkpoint.colliders : ImmutableHashSet<long>.Empty;
             RcHeightfield heightfield = checkpoint != null ? checkpoint.heightfield : voxelTile.Heightfield();
@@ -79,7 +80,7 @@ namespace DotRecast.Detour.Dynamic
         }
 
         private RecastBuilderResult BuildRecast(RecastBuilder builder, DynamicNavMeshConfig config, VoxelTile vt,
-            RcHeightfield heightfield, Telemetry telemetry)
+            RcHeightfield heightfield, RcTelemetry telemetry)
         {
             RcConfig rcConfig = new RcConfig(config.useTiles, config.tileSizeX, config.tileSizeZ, vt.borderSize,
                 config.partitionType, vt.cellSize, vt.cellHeight, config.walkableSlopeAngle, true, true, true,

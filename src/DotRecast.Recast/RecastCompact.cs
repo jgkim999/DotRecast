@@ -17,6 +17,7 @@ freely, subject to the following restrictions:
 */
 
 using System;
+using DotRecast.Core;
 using static DotRecast.Core.RcMath;
 using static DotRecast.Recast.RcConstants;
 
@@ -37,7 +38,7 @@ namespace DotRecast.Recast
         /// See the #rcConfig documentation for more information on the configuration parameters.
         ///
         /// @see rcAllocCompactHeightfield, rcHeightfield, rcCompactHeightfield, rcConfig
-        public static RcCompactHeightfield BuildCompactHeightfield(Telemetry ctx, int walkableHeight, int walkableClimb,
+        public static RcCompactHeightfield BuildCompactHeightfield(RcTelemetry ctx, int walkableHeight, int walkableClimb,
             RcHeightfield hf)
         {
             ctx.StartTimer("BUILD_COMPACTHEIGHTFIELD");
